@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Network Control Center</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+<style>
+
+body{
+    margin:0;
+    background:#050505;
+    color:#00ff9d;
+    font-family:"Share Tech Mono", monospace;
+}
+
+.grid{
+    display:grid;
+    grid-template-columns:50% 50%;
+    grid-template-rows:50% 50%;
+    height:100vh;
+}
+
+.panel{
+    border:1px solid #00ff66;
+    margin:4px;
+    padding:8px;
+    overflow:auto;
+    position:relative;
+}
+
+.panel::-webkit-scrollbar{
+    width:0;
+    height:0;
+}
+
+#devices{
+    grid-column:1;
+    grid-row:1 / span 2;
+}
+
+#activityPanel{
+    grid-column:2;
+    grid-row:1;
+}
+
+#bottomRight{
+    grid-column:2;
+    grid-row:2;
+    display:grid;
+    grid-template-columns:50% 50%;
+}
+
+.device{
+    border-bottom:1px solid #0f3;
+    padding:6px;
+    margin-bottom:2px;
+    position:relative;
+}
+
+.badge{
+    position:absolute;
+    right:6px;
+    bottom:4px;
+    color:#fff;
+    font-size:10px;
+}
+
+.badge-latency{ color:orange; }
+.badge-activity{ color:yellow; }
+.badge-new{ color:#7CFC00; }
+
+button{
+    background:black;
+    color:#00ff9d;
+    border:1px solid #00ff9d;
+    cursor:pointer;
+    font-family:inherit;
+}
+
+#sortBtn{
+    position:absolute;
+    right:8px;
+    top:8px;
+}
+
+#analyzeBtn{
+    position:absolute;
+    right:8px;
+    top:8px;
+}
+
+h2{
+    margin-top:0;
+}
+
+#aiOutput{
+    white-space:pre-wrap;
+    font-size:13px;
+}
+
+/* Make event log entries smaller */
+#logs div{ font-size:12px; }
+
+.log-left{ color:#ff4d4d; }
+.log-latency{ color:orange; }
+.log-activity{ color:yellow; }
+.log-new{ color:#7CFC00; }
+.log-mine{ color:magenta; }
+
+.device-mine { border-color:magenta; }
+
+canvas{
+    height:calc(100% - 35px) !important;
+    width:100% !important;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="grid">
+
+    <!-- DEVICES -->
+    <div class="panel" id="devices">
+
+        <button id="sortBtn">SORT: OFF</button>
+
+        <h2 id="deviceCount">
+            DEVICES
+        </h2>
+
+        <div id="deviceList"></div>
+
+    </div>
+
+    <!-- ACTIVITY -->
+    <div class="panel" id="activityPanel">
+
+        <h2>
+            NETWORK ACTIVITY
+        </h2>
+
+        <canvas id="activityChart"></canvas>
+
+    </div>
+
+    <!-- BOTTOM -->
+    <div id="bottomRight">
+
+        <!-- EVENT LOG -->
+        <div class="panel" id="logs">
+
+            <h2>EVENT LOG</h2>
+
+        </div>
+
+        <!-- AI PANEL -->
+        <div class="panel">
+
+            <button id="analyzeBtn">
+                RUN ANALYSIS
+            </button>
+
+            <h2>AI ANALYSIS</h2>
+
+            <div id="aiOutput">
+Waiting...
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+
+let chart;
+let sortModes = ["OFF","ACTIVITY","AVG_ACTIVITY","LATENCY","BANDWIDTH","SEEN"];
+let sortIndex = 0; // 0 = OFF
+let lastData = null;
+const MY_CLASS = 'device-mine';
+
+document.getElementById("sortBtn").onclick = () => {
+    // cycle through sort modes
+    sortIndex = (sortIndex + 1) % sortModes.length;
+    const mode = sortModes[sortIndex];
+    document.getElementById("sortBtn").innerText = `SORT: ${mode}`;
+
+    if(lastData){
+        renderDevices(lastData);
+    }
+};
+
+async function load(){
+
+    const res = await fetch("/api/data");
+    const data = await res.json();
+
+    lastData = data;
+    renderDevices(data);
+    renderLogs(data.logs, data.my_ip);
+    drawChart(data.timeline);
+}
+
+function renderDevices(data){
+
+    let devices = [...data.devices];
+
+    const mode = sortModes[sortIndex];
+    if(mode !== "OFF"){
+        devices.sort((a,b)=>{
+            switch(mode){
+                case "ACTIVITY":
+                    return (b.activity || 0) - (a.activity || 0);
+                case "AVG_ACTIVITY":
+                    return (b.avg_activity || 0) - (a.avg_activity || 0);
+                case "LATENCY":
+                    return (a.latency || 0) - (b.latency || 0); // low latency first
+                case "BANDWIDTH":
+                    return (b.bandwidth || 0) - (a.bandwidth || 0);
+                case "SEEN":
+                    return (b.seen_count || 0) - (a.seen_count || 0);
+                default:
+                    return 0;
+            }
+        });
+    }
+
+    document.getElementById("deviceCount").innerText =
+        `DEVICES (${data.device_count})`;
+
+    document.getElementById("deviceList").innerHTML =
+        devices.map(d=>{
+
+                let warning = "";
+                let badgeClass = "";
+
+                if(d.latency > 300){
+                    warning = "HIGH LATENCY";
+                    badgeClass = "badge-latency";
+                }
+
+                if(d.activity > 95){
+                    warning = "HIGH ACTIVITY";
+                    badgeClass = "badge-activity";
+                }
+
+            const mine = (data.my_ip && d.ip === data.my_ip) ? true : false;
+
+            return `
+            <div class="device ${mine ? 'device-mine' : ''}">
+
+                <b>${d.vendor || "Unknown Device"} ${mine ? '<span style="color:magenta">(YOU)</span>' : ''}</b><br>
+
+                IP: ${d.ip}<br>
+
+                Latency: ${d.latency}ms<br>
+
+                Activity: ${d.activity}<br>
+
+                Avg Activity: ${Number(d.avg_activity).toFixed(1)}<br>
+
+                Seen: ${d.seen_count}<br>
+
+                BW Est: ${d.bandwidth ?? 0} KB/s
+
+                ${
+                    warning
+                    ? `<div class="badge ${badgeClass}">${warning}</div>`
+                    : ""
+                }
+
+            </div>
+            `;
+
+        }).join("");
+}
+
+function renderLogs(logs, my_ip){
+
+    document.getElementById("logs").innerHTML =
+        "<h2>EVENT LOG</h2>" +
+        logs.map(l=>{
+            const kind = l.kind || "";
+            const cls = kind ? `log-${kind}` : "";
+            const mine = (my_ip && l.ip && l.ip === my_ip) ? 'log-mine' : '';
+            return `<div class="${cls} ${mine}">[${l.time}] ${l.msg}</div>`;
+        }).join("");
+}
+
+function drawChart(timeline){
+
+    const labels =
+        timeline.map(t=>t.time);
+
+    const values =
+        timeline.map(t=>t.value);
+
+    const latValues =
+        timeline.map(t=>t.latency ?? 0);
+
+    const ctx =
+        document.getElementById("activityChart");
+
+    if(!chart){
+
+        chart = new Chart(ctx,{
+
+            type:"line",
+
+            data:{
+                labels:labels,
+                datasets:[{
+                    label:"Network Activity",
+                    data:values,
+                    borderColor:"#00ff9d",
+                    pointRadius:3,
+                    tension:0.25,
+                    yAxisID: 'activity'
+                },{
+                    label:"Avg Latency (ms)",
+                    data:latValues,
+                    borderColor:"orange",
+                    pointRadius:3,
+                    tension:0.25,
+                    yAxisID: 'latency'
+                }]
+            },
+
+            options:{
+
+                animation:false,
+
+                responsive:true,
+
+                maintainAspectRatio:false,
+
+                plugins:{
+                    legend:{
+                        labels:{
+                            color:"#00ff9d"
+                        }
+                    }
+                },
+
+                scales:{
+
+                    x:{
+                        ticks:{
+                            color:"#00ff9d"
+                        }
+                    },
+
+                    activity:{
+                        type: 'linear',
+                        position: 'left',
+                        min:0,
+                        max:100,
+                        ticks:{
+                            color:"#00ff9d"
+                        }
+                    },
+
+                    latency:{
+                        type: 'linear',
+                        position: 'right',
+                        ticks:{
+                            color:"orange"
+                        },
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    }
+
+                }
+            }
+        });
+
+    }else{
+
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        if(chart.data.datasets[1]) chart.data.datasets[1].data = latValues;
+        chart.update();
+    }
+}
+
+document.getElementById("analyzeBtn").onclick =
+async ()=>{
+
+    document.getElementById("aiOutput").innerText =
+        "Analyzing...";
+
+    try{
+
+        const response =
+            await fetch("/api/analyze");
+
+        const data =
+            await response.json();
+
+        document.getElementById("aiOutput").innerText =
+            data.analysis;
+
+    }catch{
+
+        document.getElementById("aiOutput").innerText =
+            "Analysis failed.";
+    }
+};
+
+setInterval(load,2000);
+
+load();
+
+</script>
+
+</body>
+</html>
