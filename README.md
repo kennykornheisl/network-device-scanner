@@ -37,22 +37,22 @@ Network Device Scanner continuously scans your local network, discovers connecte
 
 # Installation
 Clone the repository:
-``
+```
 git clone https://github.com/kennykornheisl/network-device-scanner.git
 cd network-device-scanner
-``
+```
 
 Install dependencies:
-``
+```
 pip install flask scapy ping3 requests
-``
+```
 
 Run the application:
-``
+```
 python app.py
-``
+```
 
 Open:
-``
+```
 http://127.0.0.1:5000
-``
+```
