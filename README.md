@@ -8,7 +8,7 @@ Network Device Scanner continuously scans your local network, discovers connecte
 ## Device Discovery
 - Automatically detects devices connected to your network
 - Displays IP addresses, vendor information, and device details like activity, latency, estimated bandwidth
-- Trakcs how many times each device has been seen
+- Tracks how many times each device has been seen
 - Maintains persistent device memory between sessions
   - Stores known devices in a local JSON database
   - Tracks average activity over time
